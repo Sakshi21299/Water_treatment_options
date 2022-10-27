@@ -1,1 +1,1 @@
-# Contains models of water treatment technologies
+# Contains models of water treatment technologies in PYOMO
