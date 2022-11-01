@@ -9,7 +9,8 @@ Created on Mon Oct 24 13:53:03 2022
 import pyomo.environ as pyo
 from pyomo.util.infeasible import log_infeasible_constraints
 from idaes.core.util import model_statistics
-
+import numpy as np
+import matplotlib.pyplot as plt
 "We develop a SEE-SVR unit model from Onishi's 2017 paper "
 
 #Create model
@@ -31,17 +32,17 @@ m.salt_feed = pyo.Param(initialize = 70,
                         units = pyo.units.g/pyo.units.kg)
 
 #Temperature of the feed stream
-m.feed_temperature = pyo.Param(initialize = 298,
-                               units = pyo.units.K)
+m.feed_temperature = pyo.Param(initialize = 25,
+                               units = pyo.units.C)
 
 #Salt in brine concentrate
 m.salt_outlet_spec = pyo.Param(initialize = 300,
                                units = pyo.units.g/pyo.units.kg)
 
 #Temperature constraint parameters
-m.DT_min = pyo.Param(initialize = 10, units = pyo.units.K)
-m.DT_min_1 = pyo.Param(initialize = 83, units = pyo.units.K)
-m.DT_min_2 = pyo.Param(initialize = 50, units = pyo.units.K)
+m.DT_min = pyo.Param(initialize = 2, units = pyo.units.C)
+m.DT_min_1 = pyo.Param(initialize = 2, units = pyo.units.C)
+m.DT_min_2 = pyo.Param(initialize = 2, units = pyo.units.C)
 
 #Antoine coefficients
 m.a = pyo.Param(initialize = 12.98437)
@@ -52,19 +53,16 @@ m.c = pyo.Param(initialize = 139.61335)
 m.cp_vapor = pyo.Param(initialize = 1.8723)
 
 #Overall heat transfer coefficient (Known parameter)
-m.overall_heat_transfer_coef =  pyo.Param(initialize = 0.03)
-
-#Density of water
-m.water_density = pyo.Param(initialize = 1000, units = pyo.units.kg/pyo.units.m**3)
+m.overall_heat_transfer_coef =  pyo.Param(initialize = 0.1)
 
 #Heat capacity ratio
-m.gamma = pyo.Param(initialize = 1.5)
+m.gamma = pyo.Param(initialize = 1.33)
 
 #Maximum compression ratio
 m.CR_max = pyo.Param(initialize = 10)
 
 #Efficiency of compressors (isentropic efficiency)
-m.eta = pyo.Param(initialize = 0.7)
+m.eta = pyo.Param(initialize = 0.75)
 
 "Set definitions"
 #Set of Evaporator effects
@@ -114,10 +112,11 @@ m.salt_mass_frac_feed= pyo.Var(domain = pyo.NonNegativeReals,
 #Vapor pressure in evaporator effects
 m.evaporator_vapor_pressure = pyo.Var(m.i,
                                       domain = pyo.NonNegativeReals,
-                                      initialize = [19930])
+                                      initialize = [19.930])
 m.super_heated_vapor_pressure = pyo.Var(m.j,
                                         domain = pyo.NonNegativeReals,
-                                        initialize = 42230)
+                                        bounds = (1, 200),
+                                        initialize = 42.230)
 # m.saturated_vapor_pressure= pyo.Var(m.i,
 #                                     domain = pyo.NonNegativeReals,
 #                                     initialize = 10100)
@@ -125,22 +124,22 @@ m.super_heated_vapor_pressure = pyo.Var(m.j,
                       #All temperature variables
 #Actual temperature of feed entering the evaporator after preheating
 m.evaporator_feed_temperature = pyo.Var(domain = pyo.NonNegativeReals,
-                                        initialize = 298,
-                                        units = pyo.units.K)
+                                        initialize = 25,
+                                        units = pyo.units.C)
 
 m.evaporator_ideal_temperature = pyo.Var(m.i,
                                          domain = pyo.NonNegativeReals,
-                                         initialize = 298)
+                                         initialize = 25)
 m.evaporator_brine_temperature = pyo.Var(m.i,
                                          domain = pyo.NonNegativeReals,
-                                         initialize = 340.75)
+                                         initialize = 35)
 
 m.super_heated_vapor_temperature = pyo.Var(m.j,
                                            domain = pyo.NonNegativeReals,
-                                           initialize = 433.82)
+                                           initialize = 45)
 m.evaporator_condensate_temperature = pyo.Var(m.i,
                                               domain = pyo.NonNegativeReals,
-                                              initialize  = 300)
+                                              initialize  = 30)
 
 m.LMTD = pyo.Var(m.i,
                  domain = pyo.NonNegativeReals,
@@ -153,7 +152,7 @@ m.theta_2 = pyo.Var(m.i,
                     initialize = 1)
 m.isentropic_temperature = pyo.Var(m.j,
                                    domain = pyo.NonNegativeReals,
-                                   initialize = 298)
+                                   initialize = 45)
 #=======================================================================
                     #All enthalpy variables
 #Specific Enthalpies of brine and vapor in the evaporator
@@ -166,13 +165,13 @@ m.evaporator_vapor_enthalpy = pyo.Var(m.i,
                                       initialize = 400)
 m.evaporator_condensate_enthalpy = pyo.Var(m.i,
                                            domain = pyo.Reals,
-                                           initialize = 1)
+                                           initialize = 100)
 
 m.evaporator_condensate_vapor_enthalpy = pyo.Var(domain = pyo.Reals,
-                                                 initialize = -100)
+                                                 initialize = 100)
 m.super_heated_vapor_enthalpy = pyo.Var(m.j,
                                   domain = pyo.Reals,
-                                  initialize = -100)
+                                  initialize = 100)
 
 #Enthalpy of the feed stream
 m.enthalpy_feed = pyo.Var(domain = pyo.Reals,
@@ -350,10 +349,6 @@ def _temp_con_5(m, i):
     return m.evaporator_condensate_temperature[i] >= m.evaporator_brine_temperature[i] + m.DT_min
 m.temp_con_5 = pyo.Constraint(m.i, rule = _temp_con_5)
 
-def _temp_con_6(m):
-    return m.evaporator_condensate_temperature[i_first] >= m.evaporator_feed_temperature + m.DT_min
-m.temp_con_6 = pyo.Constraint(rule = _temp_con_6)
-
 #Compressor Equations============================================================
 #Isentropic temperature constraints (Equation 51, 52)
 def _isentropic_temp_calculation(m, j):
@@ -375,12 +370,6 @@ def _temperature_super_heated_vapor_calculation(m, j):
             1/m.eta*(m.isentropic_temperature[j] - m.evaporator_brine_temperature[i_last])
 m.temperature_super_heated_vapor_calculation = pyo.Constraint(m.j, rule = _temperature_super_heated_vapor_calculation)
 
-#(Equation 55) #Did the same thing for the first compressor. Xh
-def _compressor_temperature_con(m, j):
-    if j == j_first:
-        return m.super_heated_vapor_temperature[j] >= m.evaporator_brine_temperature[j]
-m.compressor_temperature_con = pyo.Constraint(m.j, rule = _compressor_temperature_con)
-
 #(Equation 56, 57)
 def _compressor_pressure_con(m, j):
     if j ==j_first:
@@ -400,15 +389,18 @@ def _total_compressor_work_estimate(m):
     return m.total_compressor_work == sum(m.compressor_work[j] for j in m.j)
 m.total_compressor_work_estimate = pyo.Constraint(rule = _total_compressor_work_estimate)
 
-
 #Salt outlet condition
 def _salt_outlet_con(m):
     return m.salt[i_first] >= m.salt_outlet_spec
 m.salt_outlet_con = pyo.Constraint(rule = _salt_outlet_con)
 
 
+#m.evaporator_brine_temperature.fix(67.75)
+m.evaporator_vapor_pressure.fix(19.93)
+
 #Objective Function
-m.obj = pyo.Objective(expr = m.total_compressor_work)
+m.obj = pyo.Objective(expr = m.total_compressor_work + m.each_evaporator_area[0])
+
 
 ipopt = pyo.SolverFactory('ipopt')
 ipopt.options["max_iter"] = 3000
@@ -417,3 +409,31 @@ ipopt.solve(m, tee=True)
 m.each_evaporator_area.display()
 m.evaporator_heat_flow.display()
 m.total_compressor_work.display()
+m.super_heated_vapor_temperature.display()
+m.evaporator_condensate_temperature.display()
+m.super_heated_vapor_pressure.display()
+m.evaporator_vapor_pressure.display()
+m.salt.display()
+m.flow_brine.display()
+m.flow_vapor_evaporator.display()
+
+#Generating area vs work plots
+# weight = np.linspace(0,5,20)
+# compressor_work = []
+# evap_area = []
+# for w in weight:
+#     m.obj = pyo.Objective(expr = w*m.total_compressor_work + m.each_evaporator_area[0])
+#     ipopt = pyo.SolverFactory('ipopt')
+#     ipopt.options["max_iter"] = 3000
+#     ipopt.solve(m, tee=True)
+#     compressor_work.append(pyo.value(m.total_compressor_work))
+#     evap_area.append(pyo.value(m.each_evaporator_area[0]))
+   
+# plt.figure()
+# plt.plot(weight, compressor_work, 'o-')
+
+# plt.figure()
+# plt.plot(weight, evap_area, '*-')
+
+# plt.figure()
+# plt.plot(evap_area, compressor_work, 'x-')
